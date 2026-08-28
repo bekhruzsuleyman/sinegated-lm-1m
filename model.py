@@ -130,7 +130,7 @@ class PlainLM(nn.Module):
         x = self.linear2(attn_out)
         attn_out, _ = self.mha2(x, x, x, attn_mask=causal_mask, need_weights=False)
         x = self.linear3(attn_out)
-        logits = self.lm_head(attn_out)
+        logits = self.lm_head(x)
         return logits
 
     @torch.no_grad()

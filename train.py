@@ -96,7 +96,7 @@ if __name__ == "__main__":
     torch.save(model.state_dict(), "singated_lm.pt")
 
     # # ---- baseline for comparison ----
-    torch.manual_seed(1337)  # same init seed, same data order
+    torch.manual_seed(42)  # same init seed, same data order
     baseline = PlainLM(vocab_size=vocab_size, d_model=d_model_plain, n_heads=n_heads,
                         max_seq_len=block_size)
     n_params_baseline = sum(p.numel() for p in baseline.parameters())

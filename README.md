@@ -8,264 +8,360 @@ Instead of using attention only as an additive/residual transformation, use the 
 
 The core operation is:
 
-$$
-f(x,y) = (Wx+b)\odot\left(\alpha\sin(y)\right)
-$$
+```math
+f(x, y) = (Wx + b) \odot (\alpha \sin(y))
+```
 
 where:
 
-* \(x\) is the current representation
-* \(W x+b\) is a learned linear transformation
-* \(y\) is an attention-derived representation
-* \(\sin(y)\) provides nonlinear, oscillatory modulation
-* \(\alpha\) controls the gating amplitude and can be learned
+* `x` is the current representation
+* `Wx + b` is a learned linear transformation
+* `y` is an attention-derived representation
+* `sin(y)` provides nonlinear, oscillatory modulation
+* `α` controls the gating amplitude and can be learned
 
-## Architecture
+---
+
+# Architecture
 
 The experimental language model uses the following structure:
 
 ```text
-                 Token IDs
-                    │
-                    ▼
-             Token Embedding
-                    │
-                    +
-             Positional Embedding
-                    │
-                    ▼
-                 Linear
-                    │
-                    ▼
-            Multi-Head Attention
-                    │
-                    ▼
-                 Linear
-                    │
-                    ▼
-          ┌─────────────────────┐
-          │  SinGated Attention │
-          │                     │
-          │ A = Attention(x)    │
-          │                     │
-          │ g = α · sin(A)      │
-          │                     │
-          │ out = Linear(x) ⊙ g │
-          └─────────────────────┘
-                    │
-                    ▼
-                Linear
-                    │
-                    ▼
-               Vocabulary
-                    │
-                    ▼
-                  Logits
+                         Token IDs
+                            │
+                            ▼
+                     Token Embedding
+                            │
+                            +
+                     Positional Embedding
+                            │
+                            ▼
+                         Linear
+                            │
+                            ▼
+                  Multi-Head Attention
+                            │
+                            ▼
+                         Linear
+                            │
+                            ▼
+                 SinGated Attention
+                            │
+                            ▼
+                         Linear
+                            │
+                            ▼
+                    Vocabulary Head
+                            │
+                            ▼
+                          Logits
 ```
 
-The central mechanism can be summarized as:
+The central mechanism is:
 
-$$
-A = \operatorname{Attention}(x)
-$$
+```math
+A = Attention(x)
+```
 
-$$
-g = \alpha\sin(A)
-$$
+```math
+g = \alpha \sin(A)
+```
 
-$$
-h = \operatorname{Linear}(x)
-$$
+```math
+h = Wx + b
+```
 
-$$
-\boxed{\operatorname{SinGated}(x,A)=h\odot g}
-$$
+```math
+SinGated(x,A) = h \odot g
+```
 
-This allows the attention mechanism to act as a **dynamic modulation signal** rather than simply being added to the representation.
+In other words, attention is used as a **dynamic modulation signal** rather than simply being added to the representation.
+
+## Implementation
+
+The core operation is implemented as:
+
+```python
+class SinGatedLinear(nn.Module):
+    """f(x, y) = (W @ x) * alpha * sin(y)"""
+
+    def forward(self, x, y):
+        Wx = self.linear(x)
+        gate = self.alpha * torch.sin(y)
+        return Wx * gate
+```
+
+The attention-conditioned block is:
+
+```python
+class SinGatedAttention(nn.Module):
+    """
+    A = Attention(x)
+    out = SinGatedLinear(x, A)
+        = (W @ x) * alpha * sin(A)
+    """
+```
+
+The attention operation itself remains standard multi-head self-attention. The experimental change is what happens **after attention produces its representation**.
 
 ---
 
 # Experiments
 
-The initial experiments were performed on the **Tiny Shakespeare** character-level language-modeling task.
+Experiments were initially performed on the **Tiny Shakespeare** character-level language-modeling task.
 
-The goal was not to build a production-scale language model, but to investigate whether the proposed architectural mechanism provides a measurable advantage under small computational budgets.
+The purpose of these experiments is not to claim that the architecture is universally superior, but to investigate whether sinusoidal attention-conditioned modulation provides useful behavior under small parameter budgets.
 
-## Experiment 1 — ~64K parameters
+---
 
-The first experiment compared SinGatedLM against a plain baseline.
+# Experiment 1 — ~64K Parameters
 
-### Seed 1337
+The first experiment compares SinGatedLM against a parameter-matched PlainLM baseline.
 
-| Model          | Parameters | Final validation loss |
-| -------------- | ---------: | --------------------: |
-| PlainLM        |     64,917 |                2.7491 |
-| **SinGatedLM** | **64,918** |            **2.5604** |
-
-SinGatedLM achieved:
-
-$$
-2.7491-2.5604=\boxed{0.1887}
-$$
-
-lower validation loss with essentially identical parameter counts.
+Both models contain essentially the same number of parameters and use the same overall computational structure, with the SinGated mechanism replaced by standard learned transformations in the baseline.
 
 ### Seed 42
 
 | Model          | Parameters | Final validation loss |
 | -------------- | ---------: | --------------------: |
-| PlainLM        |     64,917 |                2.7491 |
-| **SinGatedLM** | **64,918** |            **2.6225** |
+| PlainLM        |     64,659 |                2.6931 |
+| **SinGatedLM** | **64,660** |            **2.5603** |
 
-The advantage appeared again:
+Difference:
 
-$$
-2.7491-2.6225=\boxed{0.1266}
-$$
-
-### Convergence
-
-In the seed-42 experiment, SinGatedLM reached a validation loss below the PlainLM's final result at approximately iteration 900:
-
-```text
-PlainLM final:        2.7491
-SinGated @ 800:       2.7725
-SinGated @ 900:       2.7299  ← already better
-SinGated @ 2999:      2.6225
+```math
+2.6931 - 2.5603 = 0.1328
 ```
 
-This suggests that the difference may involve not only final validation performance, but also **optimization/convergence behavior**.
+SinGatedLM achieved a **0.1328 lower validation loss** while using exactly **one additional parameter**.
+
+The parameter difference is therefore negligible:
+
+```text
+SinGatedLM    64,660
+PlainLM       64,659
+Difference         1
+```
+
+## Convergence
+
+The advantage appeared throughout training rather than only at the final checkpoint.
+
+| Iteration | SinGatedLM |    PlainLM |
+| --------: | ---------: | ---------: |
+|       800 |     2.7418 |     2.8728 |
+|      1300 |     2.6677 |     2.7664 |
+|      1600 |     2.6673 |     2.7819 |
+|      2000 |     2.6180 |     2.7158 |
+|      2400 |     2.6016 |     2.7247 |
+|      2999 | **2.5603** | **2.6931** |
+
+This suggests that the observed difference is not limited to a single final checkpoint and may involve differences in optimization behavior.
+
+### Training time
+
+```text
+SinGatedLM    21.7s
+PlainLM       22.0s
+```
+
+The measured training times were also very similar in this run.
 
 ---
 
-# Experiment 2 — ~1M vs ~1.5M parameters
+# Experiment 2 — ~1M vs ~1.5M Parameters
 
-The architecture was then scaled substantially.
+The architecture was then scaled to approximately one million parameters.
 
-The SinGatedLM used approximately 1.03M parameters, while the PlainLM baseline used approximately 1.54M parameters.
+This experiment was **not parameter-matched**.
+
+The SinGatedLM contained approximately 1.03M parameters, while the PlainLM contained approximately 1.54M parameters.
 
 ### Results
 
 | Model          |    Parameters | Final train loss | Final validation loss |      Time |
 | -------------- | ------------: | ---------------: | --------------------: | --------: |
-| **SinGatedLM** | **1,027,048** |       **1.6646** |            **1.8811** | **55.9s** |
-| PlainLM        |     1,535,483 |           1.7996 |                2.0103 |     67.6s |
+| **SinGatedLM** | **1,027,048** |       **1.6663** |            **1.8818** | **58.3s** |
+| PlainLM        |     1,535,483 |           1.7800 |                1.9914 |     68.3s |
 
-SinGatedLM achieved:
+Validation-loss difference:
 
-$$
-\boxed{1.8811 < 2.0103}
-$$
+```math
+1.9914 - 1.8818 = 0.1096
+```
 
-while using approximately:
+Parameter ratio:
 
-$$
-\frac{1,027,048}{1,535,483}\approx66.9\%
-$$
+```math
+\frac{1,027,048}{1,535,483} \approx 0.669
+```
 
-of the baseline's parameters.
+Thus, in this experiment, SinGatedLM used approximately **33% fewer parameters** while achieving a lower validation loss.
 
-In other words, SinGatedLM used approximately **33% fewer parameters** while achieving lower validation loss in this experiment.
-
-The validation-loss difference was:
-
-$$
-2.0103-1.8811=\boxed{0.1292}
-$$
-
-The model also reached a validation loss below the PlainLM's final result at approximately iteration 1900:
+It also completed the 3000-iteration training run faster:
 
 ```text
-PlainLM final:        2.0103
-
-SinGated:
-1800 → 2.0270
-1900 → 1.9954  ← beats PlainLM final
-2999 → 1.8811
+SinGatedLM    58.3s
+PlainLM       68.3s
 ```
+
+### Important limitation
+
+This is **not** an equal-parameter comparison.
+
+The result therefore should be interpreted as:
+
+> SinGatedLM achieved lower validation loss than the tested PlainLM configuration while using substantially fewer parameters.
+
+It should **not** be interpreted as proof that SinGatedLM is superior to an equally-sized baseline at the ~1M scale.
+
+A parameter-matched ~1M experiment is the next important comparison.
 
 ---
 
-# Current Results
+# Results So Far
 
-Across the initial experiments:
+The current experiments show:
 
 ```text
-                 Validation Loss
+                         Validation Loss
 
-64K
-PlainLM          2.7491
-SinGatedLM       2.5604
-                 ↓ 0.1887
+~64K parameters
 
-1M / 1.5M
-PlainLM          2.0103
-SinGatedLM       1.8811
-                 ↓ 0.1292
+PlainLM                  2.6931
+SinGatedLM               2.5603
+                         ↓ 0.1328
+
+
+~1M / ~1.5M parameters
+
+PlainLM                  1.9914
+SinGatedLM               1.8818
+                         ↓ 0.1096
 ```
 
-The results are encouraging, but these experiments should be considered **initial evidence rather than a definitive architectural claim**.
+The first experiment is particularly useful because the models were effectively parameter-matched:
 
-The ~1M experiment is also not parameter-matched: SinGatedLM has ~1.03M parameters while the PlainLM has ~1.54M. The result therefore demonstrates an advantage under the tested configurations, but does not by itself establish superiority at an identical parameter budget.
+```text
+SinGatedLM    64,660 parameters
+PlainLM       64,659 parameters
+```
+
+while the ~1M experiment demonstrates that the architecture continues to produce competitive results at a substantially larger scale, although that comparison uses different parameter budgets.
 
 ---
 
 # Why SinGated?
 
-The motivation comes from treating neural transformations as more than repeated linear projections.
+The motivation is to explore neural transformations involving multiple interacting variables rather than repeatedly applying only:
 
-A conventional transformation might look like:
+```math
+y = Wx + b
+```
 
-$$
-y = Wx+b
-$$
+SinGatedLM instead uses:
 
-SinGated instead introduces a second variable:
+```math
+y = f(x, A)
+```
 
-$$
-y=f(x,A)
-$$
+where `A` is produced by attention.
 
-where the second variable is produced by attention:
+Specifically:
 
-$$
-A=\operatorname{Attention}(x)
-$$
+```math
+A = Attention(x)
+```
 
-This gives the network a learned context-dependent modulation mechanism:
+and:
 
-$$
-\boxed{
-f(x,A)
-=
-(Wx+b)\odot\alpha\sin(A)
-}
-$$
+```math
+f(x,A) = (Wx+b) \odot \alpha\sin(A)
+```
 
-The hypothesis is that this provides a different form of representational interaction from simply adding attention outputs to the residual stream.
+This gives attention a second role:
+
+```text
+Traditional use:
+
+x → Attention(x) → representation
+                         │
+                         ▼
+                       output
+
+
+SinGated use:
+
+x ────────────────→ Linear(x) ──────┐
+                                    │
+Attention(x) → sin(·) → gate ──────┤
+                                    ▼
+                                  ×
+                                    │
+                                    ▼
+                                  output
+```
+
+The hypothesis is that this multiplicative nonlinear interaction can provide useful representational behavior that is different from simply adding attention outputs to the network's representation.
 
 ---
 
 # Experimental Philosophy
 
-The project follows a simple principle:
+The project follows:
 
-> **Hypothesis → implementation → controlled experiment → measurement → scaling**
+```text
+Hypothesis
+    ↓
+Implementation
+    ↓
+Controlled experiment
+    ↓
+Measurement
+    ↓
+Scaling
+    ↓
+Validation
+```
 
-The purpose of the experiments is to determine whether the architectural mechanism actually provides useful behavior, rather than assuming that it does.
+The goal is to test the mechanism experimentally rather than assume that a mathematically unusual operation is automatically better.
 
-Future experiments can investigate:
+Future experiments include:
 
-* parameter-matched baselines
-* additional random seeds
-* different gating functions
-* different values/parameterizations of \(\alpha\)
-* removing the sinusoidal function
+* parameter-matched ~1M models
+* multiple random seeds
+* larger datasets
+* different sequence lengths
+* different values of `α`
+* learnable vs fixed `α`
+* alternative gating functions
+* removing the sinusoidal operation
 * replacing `sin` with other nonlinear functions
-* larger and more diverse datasets
-* language-model benchmarks
-* training efficiency
-* inference efficiency
+* training-efficiency comparisons
+* inference-efficiency comparisons
+* standard language-model benchmarks
+
+---
+
+# Reproducibility
+
+The current experiments use:
+
+* Dataset: **Tiny Shakespeare**
+* Task: character-level language modeling
+* Optimizer: `AdamW`
+* Training iterations: `3000`
+* Batch size: `32`
+* Block size: `128`
+* Attention heads: `4`
+* Learning rate: `3e-4`
+* Evaluation interval: `100`
+* Loss: cross-entropy
+* Device: CUDA when available
+
+The experiments use a fixed random seed for reproducibility.
+
+Note that the exact training results can vary depending on hardware, PyTorch/CUDA versions, random-number-generator state, and other implementation details.
 
 ---
 
@@ -273,9 +369,16 @@ Future experiments can investigate:
 
 🚧 **Experimental / Research**
 
-Current results are promising, particularly because SinGatedLM has shown lower validation loss in both the ~64K experiments and the ~1M experiment.
+SinGatedLM is an experimental architecture.
 
-The architecture is still being investigated and should not yet be interpreted as a generally superior replacement for standard Transformer components.
+The current results are encouraging:
+
+* A parameter-matched ~64K experiment shows a **0.1328 lower validation loss** for SinGatedLM.
+* A ~1M vs ~1.5M experiment shows a **0.1096 lower validation loss** for SinGatedLM despite using approximately **33% fewer parameters**.
+
+However, these results are not sufficient to establish general superiority over Transformer architectures.
+
+The most important next step is a **parameter-matched ~1M experiment**, followed by multiple-seed and broader-dataset evaluation.
 
 ---
 
@@ -283,7 +386,7 @@ The architecture is still being investigated and should not yet be interpreted a
 
 MIT License
 
-Copyright (c) 2026 bekhruzsuleyman
+Copyright (c) 2026 Bekhruz Suleyman
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -302,6 +405,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
 
 # Author
 
