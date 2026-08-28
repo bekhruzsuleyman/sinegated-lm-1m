@@ -129,7 +129,7 @@ class PlainLM(nn.Module):
         attn_out, _ = self.mha(x, x, x, attn_mask=causal_mask, need_weights=False)
         x = x + attn_out
         x = self.linear2(x)
-        attn_out, _ = x + self.mha2(x, x, x, attn_mask=causal_mask, need_weights=False)
+        attn_out, _ = self.mha2(x, x, x, attn_mask=causal_mask, need_weights=False)
         x = x + attn_out
         x = self.linear3(x)
         logits = self.lm_head(x)
