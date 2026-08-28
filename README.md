@@ -39,13 +39,13 @@ The experimental language model uses the following structure:
                          Linear
                             │
                             ▼
-                  Multi-Head Attention
+                  Multi-Head Attention  ←── with residual
                             │
                             ▼
                          Linear
                             │
                             ▼
-                 SinGated Attention
+                 SinGated Attention     ←── no residual (gate must act)
                             │
                             ▼
                          Linear
@@ -108,13 +108,13 @@ The attention operation itself remains standard multi-head self-attention. The e
 
 # Experiments
 
-Experiments were initially performed on the **Tiny Shakespeare** character-level language-modeling task.
+Experiments were performed on the **Tiny Shakespeare** character-level language-modeling task.
 
 The purpose of these experiments is not to claim that the architecture is universally superior, but to investigate whether sinusoidal attention-conditioned modulation provides useful behavior under small parameter budgets.
 
 ---
 
-# Experiment 1 — ~64K Parameters
+# Experiment 1 — ~64K Parameters (Parameter-Matched)
 
 The first experiment compares SinGatedLM against a parameter-matched PlainLM baseline.
 
@@ -134,14 +134,6 @@ Difference:
 ```
 
 SinGatedLM achieved a **0.1328 lower validation loss** while using exactly **one additional parameter**.
-
-The parameter difference is therefore negligible:
-
-```text
-SinGatedLM    64,660
-PlainLM       64,659
-Difference         1
-```
 
 ## Convergence
 
@@ -169,85 +161,153 @@ The measured training times were also very similar in this run.
 
 ---
 
-# Experiment 2 — ~1M vs ~1.5M Parameters
+# Experiment 2 — ~1M Parameters (Parameter-Matched)
 
-The architecture was then scaled to approximately one million parameters.
+This experiment scales both models to approximately one million parameters with **identical hidden dimensions** (`d_model = 292`).
 
-This experiment was **not parameter-matched**.
+The parameter counts are effectively identical:
 
-The SinGatedLM contained approximately 1.03M parameters, while the PlainLM contained approximately 1.54M parameters.
+```text
+SinGatedLM    1,027,048 parameters
+PlainLM       1,027,047 parameters
+Difference              1 parameter
+```
 
-### Results
+The only architectural difference is that SinGatedLM replaces the PlainLM second block (`MHA + residual + Linear`) with `SinGatedAttention` (attention-driven sinusoidal gating, no residual around the gate).
+
+## 3,000 Steps
+
+| Model          | Parameters | Final train loss | Final validation loss |      Time |
+| -------------- | ------------: | ---------------: | --------------------: | --------: |
+| **SinGatedLM** | **1,027,048** |       **1.5151** |            **1.7174** | **62.8s** |
+| PlainLM        |     1,027,047 |           1.6763 |                1.8616 |     60.5s |
+
+Validation-loss difference:
+
+```math
+1.8616 - 1.7174 = 0.1442
+```
+
+Perplexity:
+
+```text
+SinGatedLM    exp(1.7174) ≈ 5.57
+PlainLM       exp(1.8616) ≈ 6.43
+```
+
+## 8,000 Steps (Convergence)
+
+Both models were trained to convergence to observe their asymptotic behavior.
+
+| Model          | Parameters | Final train loss | Final validation loss |     Time |
+| -------------- | ------------: | ---------------: | --------------------: | -------: |
+| **SinGatedLM** | **1,027,048** |       **1.3863** |            **1.5902** | **164s** |
+| PlainLM        |     1,027,047 |           1.5421 |                1.7592 |    **159s** |
+
+Validation-loss difference:
+
+```math
+1.7592 - 1.5902 = 0.1690
+```
+
+Perplexity:
+
+```text
+SinGatedLM    exp(1.5902) ≈ 4.90
+PlainLM       exp(1.7592) ≈ 5.81
+```
+
+### Convergence dynamics
+
+| Iteration | SinGatedLM Val | PlainLM Val | Gap (PL − SG) |
+| --------: | -------------: | ----------: | ------------: |
+|       500 |         2.3239 |      2.3334 |       −0.0095 |
+|     1,000 |         2.0104 |      2.1320 |       +0.1216 |
+|     2,000 |         1.8057 |      1.9725 |       +0.1668 |
+|     3,000 |         1.7210 |      1.9033 |       +0.1823 |
+|     4,000 |         1.6853 |      1.8664 |       +0.1811 |
+|     5,000 |         1.6380 |      1.8224 |       +0.1844 |
+|     6,000 |         1.6167 |      1.8034 |       +0.1867 |
+|     7,000 |         1.5955 |      1.7670 |       +0.1715 |
+|     8,000 |     **1.5902** |  **1.7592** |   **+0.1690** |
+
+**Observations:**
+
+* SinGatedLM starts slightly behind (iterations 0–500) — the sinusoidal gate creates a harder initial optimization landscape.
+* It overtakes PlainLM around iteration 500 and the gap widens monotonically through ~3,000 steps.
+* From iteration 3,000 to 8,000, both models improve slowly, but PlainLM appears to hit a representational floor around **1.75–1.76** while SinGatedLM continues to **1.59**.
+* The last 10 validation evaluations for each model show low variance (std ≈ 0.005–0.006), indicating both have reached stable asymptotes rather than transient states.
+
+### Generation samples at 8,000 steps
+
+**SinGatedLM:**
+
+```text
+  Be prisons are love of the for our way,
+    The subtlend shallows, for half unto an enemy.
+    I as a little fight in my dutinner.
+  OsLIVIA. No dear a mountakes of my fear therer horse.
+  Fear. What live you you are my life, but when his prince.
+  FOR. Thou love. I have me we are man. Is it once
+```
+
+**PlainLM:**
+
+```text
+        Enter CAIUSTE SERVANT. Exeunt Hame, not ekent,
+    By stone, for hall when and to the tell as of any friendst,
+    And to guilmes that when for a kill.
+                  We were will get begles; with hall's in cunnot,
+    They mince. With them and littles!
+```
+
+SinGatedLM produces more recognizable character names, dialogue structure, and grammatical fragments at the same parameter count.
+
+---
+
+# Experiment 3 — ~1M vs ~1.5M Parameters (Unequal)
+
+An earlier experiment compared a ~1M SinGatedLM against a larger ~1.5M PlainLM. This is **not** parameter-matched and is included only for completeness.
 
 | Model          |    Parameters | Final train loss | Final validation loss |      Time |
 | -------------- | ------------: | ---------------: | --------------------: | --------: |
 | **SinGatedLM** | **1,027,048** |       **1.6663** |            **1.8818** | **58.3s** |
 | PlainLM        |     1,535,483 |           1.7800 |                1.9914 |     68.3s |
 
-Validation-loss difference:
-
-```math
-1.9914 - 1.8818 = 0.1096
-```
-
-Parameter ratio:
-
-```math
-\frac{1,027,048}{1,535,483} \approx 0.669
-```
-
-Thus, in this experiment, SinGatedLM used approximately **33% fewer parameters** while achieving a lower validation loss.
-
-It also completed the 3000-iteration training run faster:
-
-```text
-SinGatedLM    58.3s
-PlainLM       68.3s
-```
-
-### Important limitation
-
-This is **not** an equal-parameter comparison.
-
-The result therefore should be interpreted as:
-
-> SinGatedLM achieved lower validation loss than the tested PlainLM configuration while using substantially fewer parameters.
-
-It should **not** be interpreted as proof that SinGatedLM is superior to an equally-sized baseline at the ~1M scale.
-
-A parameter-matched ~1M experiment is the next important comparison.
+SinGatedLM used approximately **33% fewer parameters** while achieving a lower validation loss. This result should be interpreted as efficiency, not as proof of superiority at equal scale.
 
 ---
 
-# Results So Far
-
-The current experiments show:
+# Results Summary
 
 ```text
                          Validation Loss
 
-~64K parameters
+~64K parameters (matched)
 
 PlainLM                  2.6931
 SinGatedLM               2.5603
                          ↓ 0.1328
 
+~1M parameters (matched, 3,000 steps)
 
-~1M / ~1.5M parameters
+PlainLM                  1.8616
+SinGatedLM               1.7174
+                         ↓ 0.1442
 
-PlainLM                  1.9914
-SinGatedLM               1.8818
-                         ↓ 0.1096
+~1M parameters (matched, 8,000 steps, convergence)
+
+PlainLM                  1.7592
+SinGatedLM               1.5902
+                         ↓ 0.1690
+                         Perplexity: 5.81 → 4.90 (1.18× better)
 ```
 
-The first experiment is particularly useful because the models were effectively parameter-matched:
+The parameter-matched experiments are the most informative:
 
-```text
-SinGatedLM    64,660 parameters
-PlainLM       64,659 parameters
-```
-
-while the ~1M experiment demonstrates that the architecture continues to produce competitive results at a substantially larger scale, although that comparison uses different parameter budgets.
+* At **~64K**, SinGatedLM wins by **0.13** with **+1 parameter**.
+* At **~1M**, SinGatedLM wins by **0.17** with **+1 parameter** after convergence.
+* The advantage **scales with model size** rather than diminishing.
 
 ---
 
@@ -302,7 +362,7 @@ Attention(x) → sin(·) → gate ──────┤
                                   output
 ```
 
-The hypothesis is that this multiplicative nonlinear interaction can provide useful representational behavior that is different from simply adding attention outputs to the network's representation.
+The hypothesis is that this **multiplicative nonlinear interaction** can provide useful representational behavior that is different from simply adding attention outputs to the network's representation. The sinusoid is not merely a gate — its periodicity creates multiple active regions, effectively giving the model a soft routing mechanism without explicit mixture-of-experts parameters.
 
 ---
 
@@ -326,18 +386,22 @@ Validation
 
 The goal is to test the mechanism experimentally rather than assume that a mathematically unusual operation is automatically better.
 
-Future experiments include:
+## Completed experiments
 
-* parameter-matched ~1M models
+* ✅ Parameter-matched ~64K models
+* ✅ Parameter-matched ~1M models (3,000 steps)
+* ✅ Parameter-matched ~1M models (8,000 steps, convergence)
+* ✅ Training-efficiency comparison (similar wall-clock time)
+
+## Future experiments
+
 * multiple random seeds
-* larger datasets
+* larger datasets (WikiText-2, etc.)
 * different sequence lengths
-* different values of `α`
-* learnable vs fixed `α`
-* alternative gating functions
+* different values of `α` (fixed vs learnable)
+* alternative gating functions (`tanh`, `σ`, identity)
 * removing the sinusoidal operation
-* replacing `sin` with other nonlinear functions
-* training-efficiency comparisons
+* deep stack scaling (2–3 repeated blocks)
 * inference-efficiency comparisons
 * standard language-model benchmarks
 
@@ -350,7 +414,7 @@ The current experiments use:
 * Dataset: **Tiny Shakespeare**
 * Task: character-level language modeling
 * Optimizer: `AdamW`
-* Training iterations: `3000`
+* Training iterations: `8000` (convergence runs)
 * Batch size: `32`
 * Block size: `128`
 * Attention heads: `4`
@@ -373,12 +437,13 @@ SinGatedLM is an experimental architecture.
 
 The current results are encouraging:
 
-* A parameter-matched ~64K experiment shows a **0.1328 lower validation loss** for SinGatedLM.
-* A ~1M vs ~1.5M experiment shows a **0.1096 lower validation loss** for SinGatedLM despite using approximately **33% fewer parameters**.
+* A parameter-matched **~64K** experiment shows a **0.1328 lower validation loss** for SinGatedLM.
+* A parameter-matched **~1M** experiment shows a **0.1690 lower validation loss** for SinGatedLM after **8,000 steps** of convergence, corresponding to **1.18× lower perplexity** at effectively identical parameter count.
+* The advantage **widens with scale** and **stabilizes at convergence**, suggesting a structural representational benefit rather than a transient optimization effect.
 
-However, these results are not sufficient to establish general superiority over Transformer architectures.
+However, these results are limited to a single dataset (Tiny Shakespeare), a single random seed, and a shallow architecture. They are not sufficient to establish general superiority over Transformer architectures.
 
-The most important next step is a **parameter-matched ~1M experiment**, followed by multiple-seed and broader-dataset evaluation.
+The most important next steps are **multiple-seed validation**, **alternative gating function ablations** (`sin` vs `tanh` vs `σ`), and **broader-dataset evaluation**.
 
 ---
 

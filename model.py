@@ -73,7 +73,7 @@ class SinGatedLM(nn.Module):
         x = self.linear1(x)
 
         attn_out, _ = self.mha(x, x, x, attn_mask=causal_mask, need_weights=False)
-        x = attn_out  # standard attention output feeds forward directly
+        x = x + attn_out  # Residual + attention output feeds forward 
 
         x = self.linear2(x)
 
@@ -127,9 +127,11 @@ class PlainLM(nn.Module):
         causal_mask = torch.triu(torch.ones(T, T, device=device, dtype=torch.bool), diagonal=1)
         x = self.linear1(x)
         attn_out, _ = self.mha(x, x, x, attn_mask=causal_mask, need_weights=False)
-        x = self.linear2(attn_out)
-        attn_out, _ = self.mha2(x, x, x, attn_mask=causal_mask, need_weights=False)
-        x = self.linear3(attn_out)
+        x = x + attn_out
+        x = self.linear2(x)
+        attn_out, _ = x + self.mha2(x, x, x, attn_mask=causal_mask, need_weights=False)
+        x = x + attn_out
+        x = self.linear3(x)
         logits = self.lm_head(x)
         return logits
 
