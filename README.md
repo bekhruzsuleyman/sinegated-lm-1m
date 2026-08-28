@@ -311,6 +311,10 @@ The parameter-matched experiments are the most informative:
 
 ---
 
+## Convergence Plot
+
+![SinGatedLM vs PlainLM — 8000 steps](assets/singatedlm_8000_convergence.png)
+
 # Why SinGated?
 
 The motivation is to explore neural transformations involving multiple interacting variables rather than repeatedly applying only:
